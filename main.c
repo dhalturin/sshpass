@@ -79,8 +79,12 @@ struct {
     } pwsrc;
 
     const char *pwprompt;
+    const char *totpprompt;
     int verbose;
     char *orig_password;
+    char *ansibleprompt;
+    char *totp;
+    int attempt;
 } args;
 
 static void show_help()
@@ -88,10 +92,14 @@ static void show_help()
     printf("Usage: " PACKAGE_NAME " [-f|-d|-p|-e] [-hV] command parameters\n"
             "   -f filename   Take password to use from file\n"
             "   -d number     Use number as file descriptor for getting password\n"
+            "   -a attempt    Number of password attempts\n"
             "   -p password   Provide password as argument (security unwise)\n"
             "   -e            Password is passed as env-var \"SSHPASS\"\n"
             "   With no parameters - password will be taken from stdin\n\n"
             "   -P prompt     Which string should sshpass search for to detect a password prompt\n"
+            "   -t TOTP       Provide TOTP as argument\n"
+            "   -T prompt     Which string should sshpass search for to detect a TOTP prompt\n"
+            "   -A prompt     Which string should sshpass search for to detect a ansible prompt\n"
             "   -v            Be verbose about what you're doing\n"
             "   -h            Show help (this screen)\n"
             "   -V            Print version information\n"
@@ -108,12 +116,14 @@ static int parse_options( int argc, char *argv[] )
     // Set the default password source to stdin
     args.pwtype=PWT_STDIN;
     args.pwsrc.fd=0;
+    args.totp="0";
+    args.attempt=1;
 
 #define VIRGIN_PWTYPE if( args.pwtype!=PWT_STDIN ) { \
     fprintf(stderr, "Conflicting password source\n"); \
     error=RETURN_CONFLICTING_ARGUMENTS; }
 
-    while( (opt=getopt(argc, argv, "+f:d:p:P:heVv"))!=-1 && error==-1 ) {
+    while( (opt=getopt(argc, argv, "+f:d:p:P:t:T:A:a:heVv"))!=-1 && error==-1 ) {
         switch( opt ) {
         case 'f':
             // Password should come from a file
@@ -128,6 +138,9 @@ static int parse_options( int argc, char *argv[] )
 
             args.pwtype=PWT_FD;
             args.pwsrc.fd=atoi(optarg);
+            break;
+        case 'a':
+            args.attempt=atoi(optarg);
             break;
         case 'p':
             // Password is given on the command line
@@ -153,6 +166,15 @@ static int parse_options( int argc, char *argv[] )
                 error=RETURN_INVALID_ARGUMENTS;
             }
             break;
+        case 't':
+            args.totp=optarg;
+            break;
+        case 'T':
+            args.totpprompt=optarg;
+            break;
+        case 'A':
+            args.ansibleprompt=optarg;
+            break;
         case '?':
         case ':':
             error=RETURN_INVALID_ARGUMENTS;
@@ -167,7 +189,7 @@ static int parse_options( int argc, char *argv[] )
                     "This program is free software, and can be distributed under the terms of the GPL\n"
                     "See the COPYING file for more information.\n"
                     "\n"
-                    "Using \"%s\" as the default password prompt indicator.\n", PACKAGE_STRING, PASSWORD_PROMPT );
+                    "Using \"%s\", \"%s\" and \"%s\" as the default password and TOTP prompt indicator.\n", PACKAGE_STRING, PASSWORD_PROMPT, ANSIBLE_PROMPT, TOTP_PROMPT );
             exit(0);
             break;
         }
@@ -215,6 +237,7 @@ static int masterpt;
 
 int childpid;
 int term;
+int attempts;
 
 int runprogram( int argc, char *argv[] )
 {
@@ -400,20 +423,29 @@ int runprogram( int argc, char *argv[] )
 int handleoutput( int fd )
 {
     // We are looking for the string
-    static int prevmatch=0; // If the "password" prompt is repeated, we have the wrong password.
-    static int state1, state2, state3;
+    static int state0, state1, state2, state3, state4;
     static int firsttime = 1;
+    static const char *compare0=ANSIBLE_PROMPT; // Asking for a password
     static const char *compare1=PASSWORD_PROMPT; // Asking for a password
     static const char compare2[]="The authenticity of host "; // Asks to authenticate host
     static const char compare3[] = "differs from the key for the IP address"; // Key changes
+    static const char *compare4=TOTP_PROMPT; // Asking for a TOTP
     // static const char compare3[]="WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!"; // Warns about man in the middle attack
     // The remote identification changed error is sent to stderr, not the tty, so we do not handle it.
     // This is not a problem, as ssh exists immediately in such a case
     char buffer[256];
     int ret=0;
 
+    if( args.ansibleprompt ) {
+        compare0= args.ansibleprompt;
+    }
+
     if( args.pwprompt ) {
         compare1 = args.pwprompt;
+    }
+
+    if( args.totpprompt ) {
+        compare4= args.totpprompt;
     }
 
     if( args.verbose && firsttime ) {
@@ -427,20 +459,31 @@ int handleoutput( int fd )
         fprintf(stderr, "SSHPASS: read: %s\n", buffer);
     }
 
+    state0 = match(compare0, buffer, numread, state0);
+
+    if (compare0[state0] == '\0') {
+        if (args.verbose)
+            fprintf(stderr, "SSHPASS: detected ansible prompt. Sending password.\n");
+        write_pass( fd );
+        state0=0;
+    }
+
     state1=match( compare1, buffer, numread, state1 );
 
     // Are we at a password prompt?
     if( compare1[state1]=='\0' ) {
-        if( !prevmatch ) {
+        if( args.attempt > 0 ) {
+            ++attempts;
+
             if( args.verbose )
-                fprintf(stderr, "SSHPASS: detected prompt. Sending password.\n");
+                fprintf(stderr, "SSHPASS: detected prompt. Sending password. Attempt #%d\n", attempts);
             write_pass( fd );
             state1=0;
-            prevmatch=1;
+            --args.attempt;
         } else {
             // Wrong password - terminate with proper error code
             if( args.verbose )
-                fprintf(stderr, "SSHPASS: detected prompt, again. Wrong password. Terminating.\n");
+                fprintf(stderr, "SSHPASS: password entry attempts used up. Wrong password. Terminating.\n");
             ret=RETURN_INCORRECT_PASSWORD;
         }
     }
@@ -459,6 +502,18 @@ int handleoutput( int fd )
             if ( compare3[state3]=='\0' ) {
                 ret=RETURN_HOST_KEY_CHANGED;
             }
+        }
+    }
+
+    if ( ret==0 && atoi(args.totp) > 0 ) {
+        state4 = match(compare4, buffer, numread, state4);
+
+        if (compare4[state4] == '\0') {
+            if (args.verbose)
+                fprintf(stderr, "SSHPASS: detected TOTP prompt, sending code\n");
+            reliable_write(fd, args.totp, strlen(args.totp));
+            reliable_write(fd, "\n", 1);
+            state4=0;
         }
     }
 

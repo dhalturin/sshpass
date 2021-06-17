@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ(2.57)
-AC_INIT([sshpass], [1.09])
+AC_INIT([sshpass], [1.10])
 AM_INIT_AUTOMAKE
 AC_COPYRIGHT([Copyright (C) 2006,2008,2011,2016,2021 Shachar Shemesh])
 AC_CONFIG_SRCDIR([main.c])
@@ -35,7 +35,17 @@ AC_CHECK_FUNCS([select posix_openpt strdup])
 AC_ARG_ENABLE([password-prompt],
         [AS_HELP_STRING([--enable-password-prompt=prompt], [Provide alternative ssh password prompt to look for.])],
         [AC_DEFINE_UNQUOTED([PASSWORD_PROMPT], ["$enable_password_prompt"], [Password prompt to use])],
-        [AC_DEFINE([PASSWORD_PROMPT], ["assword"])])
+        [AC_DEFINE([PASSWORD_PROMPT], ["assword:"])])
+
+AC_ARG_ENABLE([ansible-prompt],
+        [AS_HELP_STRING([--enable-ansible-prompt=prompt], [Provide alternative ansible password prompt to look for.])],
+        [AC_DEFINE_UNQUOTED([ANSIBLE_PROMPT], ["$enable_ansible_prompt"], [Password prompt to use])],
+        [AC_DEFINE([ANSIBLE_PROMPT], ["BECOME password"])])
+
+AC_ARG_ENABLE([totp-prompt],
+        [AS_HELP_STRING([--enable-totp-prompt=prompt], [Provide alternative ssh TOTP prompt to look for.])],
+        [AC_DEFINE_UNQUOTED([TOTP_PROMPT], ["$enable_totp_prompt"], [TOTP prompt to use])],
+        [AC_DEFINE([TOTP_PROMPT], ["Verification code"])])
 
 AC_CONFIG_FILES([Makefile])
 AM_CONFIG_HEADER(config.h)

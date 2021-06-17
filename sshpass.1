@@ -45,6 +45,21 @@ sshpass looks for the string "assword:" (which matches both "Password:" and
 "password:"). If your client's prompt does not fall under either of these,
 you can override the default with this option.
 .TP
+.B \-A
+Set the ansible password prompt. Sshpass searched for this prompt in the program's
+output to the TTY as an indication when to send the password. By default
+sshpass looks for the string "BECOME password" (which matches both "BECOME password[defaults to SSH password]:").
+You can override the default with this option.
+.TP
+.B \-T
+Set the TOTP prompt. Sshpass searched for this prompt in the program's
+output to the TTY as an indication when to send the TOTP. By default
+sshpass looks for the string "Verification code" (which matches both "Verification code:").
+You can override the default with this option.
+.TP
+.B \-t\fItotp\fP
+The TOTP is given on the command line.
+.TP
 .B \-v
 Be verbose. sshpass will output to stderr information that should help debug
 cases where the connection hangs, seemingly for no good reason.
